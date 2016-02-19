@@ -31,6 +31,7 @@ import warnings
 from collections import defaultdict
 
 from ansible import constants as C
+from ansible.compat.six import string_types
 from ansible.module_utils._text import to_text
 
 
@@ -173,7 +174,11 @@ class PluginLoader:
         if self.config is not None:
             for path in self.config:
                 path = os.path.realpath(os.path.expanduser(path))
-                contents = glob.glob("%s/*" % path) + glob.glob("%s/*/*" % path)
+                contents = []
+                # FIXME: arbitrary 10 deep here, should probably walk() to find files
+                #        instead so we don't run into future problems.
+                for i in range(1, 10):
+                    contents += glob.glob("%s/%s" % (path, '/*' * i))
                 for c in contents:
                     if os.path.isdir(c) and c not in ret:
                         ret.append(c)
@@ -270,6 +275,21 @@ class PluginLoader:
                 except IndexError:
                     extension = ''
 
+
+                if isinstance(name, tuple):
+                    dir_parts = list(reversed(os.path.dirname(full_path).split(os.sep) + [base_name]))
+                    match = True
+                    for idx, part in enumerate(reversed(name)):
+                        if part != dir_parts[idx]:
+                            match = False
+                            break
+                    if not match:
+                        continue
+                    if name not in self._plugin_path_cache['']:
+                        self._plugin_path_cache[''][name] = full_path
+                    if name not in self._plugin_path_cache[extension]:
+                        self._plugin_path_cache[extension][name] = full_path
+
                 # Module found, now enter it into the caches that match
                 # this file
                 if base_name not in self._plugin_path_cache['']:
@@ -284,7 +304,7 @@ class PluginLoader:
                 if full_name not in self._plugin_path_cache[extension]:
                     self._plugin_path_cache[extension][full_name] = full_path
 
-            self._searched_paths.add(path)
+            #self._searched_paths.add(path)
             try:
                 return pull_cache[name]
             except KeyError:
@@ -293,7 +313,7 @@ class PluginLoader:
                 pass
 
         # if nothing is found, try finding alias/deprecated
-        if not name.startswith('_'):
+        if isinstance(name, string_types) and not name.startswith('_'):
             alias_name = '_' + name
             # We've already cached all the paths at this point
             if alias_name in pull_cache:
@@ -464,6 +484,13 @@ module_loader = PluginLoader(
     'ansible.modules',
     C.DEFAULT_MODULE_PATH,
     'library',
+)
+
+module_utils_loader = PluginLoader(
+    '',
+    'ansible.module_utils',
+    'module_utils',
+    'module_utils',
 )
 
 lookup_loader = PluginLoader(

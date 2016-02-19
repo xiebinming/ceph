@@ -34,6 +34,7 @@ from ansible.release import __version__, __author__
 from ansible import constants as C
 from ansible.errors import AnsibleError
 from ansible.module_utils._text import to_bytes, to_text
+from ansible.plugins import module_utils_loader
 # Must import strategy and use write_locks from there
 # If we import write_locks directly then we end up binding a
 # variable to the object and then it never gets updated.
@@ -419,8 +420,6 @@ class ModuleDepFinder(ast.NodeVisitor):
 
 
 def _slurp(path):
-    if not os.path.exists(path):
-        raise AnsibleError("imported module support code does not exist at %s" % os.path.abspath(path))
     fd = open(path, 'rb')
     data = fd.read()
     fd.close()
@@ -474,59 +473,64 @@ def recursive_finder(name, data, py_module_names, py_module_cache, zf):
         if py_module_name[0] == 'six':
             # Special case the python six library because it messes up the
             # import process in an incompatible way
-            module_info = imp.find_module('six', [_SNIPPET_PATH])
-            py_module_name = ('six',)
+            mod = ('six',)
+            mod_path = os.path.join(_SNIPPET_PATH, 'six.py')
             idx = 0
         else:
             # Check whether either the last or the second to last identifier is
             # a module name
-            for idx in (1, 2):
-                if len(py_module_name) < idx:
-                    break
+            for idx in (0, 1):
                 try:
-                    module_info = imp.find_module(py_module_name[-idx],
-                            [os.path.join(_SNIPPET_PATH, *py_module_name[:-idx])])
+                    if idx == 0:
+                        mod = py_module_name[:]
+                    else:
+                        mod = py_module_name[:-1]
+                    mod_path = module_utils_loader.find_plugin(mod)
+                    if mod_path is None:
+                        continue
+                    #module_info = imp.find_module(mod[-1], [os.path.dirname(mod_path)])
                     break
-                except ImportError:
+                except ImportError as e:
                     continue
 
         # Could not find the module.  Construct a helpful error message.
-        if module_info is None:
-            msg = ['Could not find imported module support code for %s.  Looked for' % name]
-            if idx == 2:
-                msg.append('either %s or %s' % (py_module_name[-1], py_module_name[-2]))
-            else:
-                msg.append(py_module_name[-1])
-            raise AnsibleError(' '.join(msg))
+        #if module_info is None:
+        #    msg = ['Could not find imported module support code for %s.  Looked for' % name]
+        #    if idx == 1:
+        #        msg.append('either %s or %s' % (py_module_name[-1], py_module_name[-2]))
+        #    else:
+        #        msg.append(py_module_name[-1])
+        #    raise AnsibleError(' '.join(msg))
 
-        if idx == 2:
-            # We've determined that the last portion was an identifier and
-            # thus, not part of the module name
-            py_module_name = py_module_name[:-1]
+        #if idx == 1:
+        #    # We've determined that the last portion was an identifier and
+        #    # thus, not part of the module name
+        #    py_module_name = py_module_name[:-1]
 
         # If not already processed then we've got work to do
-        if py_module_name not in py_module_names:
+        if mod not in py_module_names:
             # If not in the cache, then read the file into the cache
             # We already have a file handle for the module open so it makes
             # sense to read it now
-            if py_module_name not in py_module_cache:
-                if module_info[2][2] == imp.PKG_DIRECTORY:
-                    # Read the __init__.py instead of the module file as this is
-                    # a python package
-                    py_module_cache[py_module_name + ('__init__',)] = _slurp(os.path.join(os.path.join(_SNIPPET_PATH, *py_module_name), '__init__.py'))
-                    normalized_modules.add(py_module_name + ('__init__',))
-                else:
-                    py_module_cache[py_module_name] = module_info[0].read()
-                    module_info[0].close()
-                    normalized_modules.add(py_module_name)
+            if mod not in py_module_cache:
+                #if module_info[2][2] == imp.PKG_DIRECTORY:
+                #    # Read the __init__.py instead of the module file as this is
+                #    # a python package
+                #    py_module_cache[py_module_name + ('__init__',)] = _slurp(mod_path)
+                #    normalized_modules.add(py_module_name + ('__init__',))
+                if 1: #else:
+                    #py_module_cache[py_module_name] = module_info[0].read()
+                    py_module_cache[mod] = _slurp(mod_path)
+                    #module_info[0].close()
+                    normalized_modules.add(mod)
 
             # Make sure that all the packages that this module is a part of
             # are also added
-            for i in range(1, len(py_module_name)):
+            for i in range(1, len(mod)):
                 py_pkg_name = py_module_name[:-i] + ('__init__',)
                 if py_pkg_name not in py_module_names:
                     normalized_modules.add(py_pkg_name)
-                    py_module_cache[py_pkg_name] = _slurp('%s.py' % os.path.join(_SNIPPET_PATH, *py_pkg_name))
+                    py_module_cache[py_pkg_name] = _slurp(mod_path)
 
     #
     # iterate through all of the ansible.module_utils* imports that we haven't
@@ -719,7 +723,7 @@ def _find_snippet_imports(module_name, module_data, module_path, module_args, ta
         lines = module_data.split(b'\n')
         for line in lines:
             if REPLACER_WINDOWS in line:
-                ps_data = _slurp(os.path.join(_SNIPPET_PATH, "powershell.ps1"))
+                ps_data = _slurp("powershell.ps1")
                 output.write(ps_data)
                 py_module_names.add((b'powershell',))
                 continue
