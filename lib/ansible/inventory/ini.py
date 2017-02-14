@@ -23,14 +23,14 @@ import ast
 import re
 
 from ansible import constants as C
-from ansible.errors import AnsibleError
+from ansible.errors import AnsibleError, AnsibleParserError
 from ansible.inventory.host import Host
 from ansible.inventory.group import Group
 from ansible.inventory.expand_hosts import detect_range
 from ansible.inventory.expand_hosts import expand_hostname_range
 from ansible.module_utils._text import to_text
 from ansible.parsing.utils.addresses import parse_address
-from ansible.utils.shlex import shlex_split
+from ansible.parsing.splitter import split_args
 
 
 class InventoryParser(object):
@@ -251,8 +251,17 @@ class InventoryParser(object):
         # gamma sudo=True user=root # to ignore comments
 
         try:
-            tokens = shlex_split(line, comments=True)
-        except ValueError as e:
+            tokens = split_args(line)
+            comment_found = False
+            comment_idx   = None
+            for idx, token in enumerate(tokens):
+                if token == '#':
+                    comment_found = True
+                    comment_idx = idx
+                    break
+            if comment_found:
+                tokens = tokens[:comment_idx]
+        except (ValueError, AnsibleParserError) as e:
             self._raise_error("Error parsing host definition '%s': %s" % (line, e))
 
         (hostnames, port) = self._expand_hostpattern(tokens[0])
